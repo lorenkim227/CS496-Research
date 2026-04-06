@@ -83,17 +83,110 @@ def get_resnet50(num_classes_binary=2, num_classes_multi=4):
 
     return model, classifier_binary, classifier_multi
 
-def get_model(model_name):
-    if model_name == "resnet50":
-        model = models.resnet50(pretrained=True)
-        model.fc = nn.Linear(model.fc.in_features, num_classes)
+# densenet121
+def get_densenet121(num_classes_binary=2, num_classes_multi=4):
+    model = models.densenet121(pretrained=True)
+    in_features = model.classifier.in_features
 
-    elif model_name == "densenet121":
-        model = models.densenet121(pretrained=True)
-        model.classifier = nn.Linear(model.classifier.in_features, num_classes)
+    model.classifier = nn.Identity()
 
-    elif model_name == "efficientnet_b3":
-        model = models.efficientnet_b3(pretrained=True)
-        model.classifier[1] = nn.Linear(model.classifier[1].in_features, num_classes)
+    classifier_binary = nn.Linear(in_features, num_classes_binary)
+    classifier_multi = nn.Linear(in_features, num_classes_multi)
 
-    return model.to(device)
+    return model, classifier_binary, classifier_multi
+
+# efficientnet_b3
+def get_efficientnet_b3(num_classes_binary=2, num_classes_multi=4):
+    model = models.efficientnet_b3(pretrained=True)
+    in_features = model.classifier[1].in_features
+
+    model.classifier = nn.Identity()
+
+    classifier_binary = nn.Linear(in_features, num_classes_binary)
+    classifier_multi = nn.Linear(in_features, num_classes_multi)
+
+    return model, classifier_binary, classifier_multi
+
+
+# training
+def train_model(backbone, clf_bin, clf_multi, train_loader, val_loader, epochs=10):
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    backbone.to(device)
+    clf_bin.to(device)
+    clf_multi.to(device)
+
+    optimizer = optim.Adam(
+        list(backbone.parameters()) +
+        list(clf_bin.parameters()) +
+        list(clf_multi.parameters()),
+        lr=1e-4
+    )
+
+    criterion_bin = nn.CrossEntropyLoss()
+    criterion_multi = nn.CrossEntropyLoss()
+
+    for epoch in range(epochs):
+        backbone.train()
+        clf_bin.train()
+        clf_multi.train()
+
+        total_loss = 0
+
+        for images, fracture, fracture_type in tqdm(train_loader):
+            images, fracture, fracture_type = images.to(device), fracture.to(device), fracture_type.to(device)
+
+            optimizer.zero_grad()
+
+            features = backbone(images)
+
+            out_bin = clf_bin(features)
+            out_multi = clf_multi(features)
+
+            loss_bin = criterion_bin(out_bin, fracture)
+
+            # compute multi-class loss only if fracture = 1
+            mask = fracture == 1
+            if mask.sum() > 0:
+                loss_multi = criterion_multi(out_multi[mask], fracture_type[mask])
+            else:
+                loss_multi = 0
+
+            loss = loss_bin + loss_multi
+            loss.backward()
+            optimizer.step()
+
+            total_loss += loss.item()
+
+        print(f"Epoch {epoch+1}, Loss: {total_loss:.4f}")
+
+
+# evaluation
+def evaluate_model(backbone, clf_bin, clf_multi, loader):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    backbone.eval()
+    clf_bin.eval()
+    clf_multi.eval()
+
+    y_true = []
+    y_pred = []
+
+    with torch.no_grad():
+        for images, fracture, fracture_type in loader:
+            images = images.to(device)
+
+            features = backbone(images)
+            out_bin = clf_bin(features)
+
+            preds = torch.argmax(out_bin, dim=1).cpu().numpy()
+
+            y_true.extend(fracture.numpy())
+            y_pred.extend(preds)
+
+    print(classification_report(y_true, y_pred))
+    print("Confusion Matrix:\n", confusion_matrix(y_true, y_pred))
+
+
+
