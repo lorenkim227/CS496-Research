@@ -39,9 +39,49 @@ class FractureDataset(Dataset):
 
         return image, torch.tensor(fracture).long(), torch.tensor(fracture_type).long()
     
-# DATA PREPROCESSING
 
-# MODEL SELECTION
+# data preprocessing
+train_transform = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.RandomHorizontalFlip(),
+    transforms.RandomRotation(10),
+    transforms.ToTensor(),
+    transforms.Normalize([0.5]*3, [0.5]*3)
+])
+
+val_transform = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.ToTensor(),
+    transforms.Normalize([0.5]*3, [0.5]*3)
+])
+
+
+# test train split
+df = pd.read_csv("data.csv")
+
+train_df, temp_df = train_test_split(df, test_size=0.2, stratify=df['fracture'], random_state=42)
+val_df, test_df = train_test_split(temp_df, test_size=0.5, stratify=temp_df['fracture'], random_state=42)
+
+train_dataset = FractureDataset(train_df, transform=train_transform)
+val_dataset = FractureDataset(val_df, transform=val_transform)
+test_dataset = FractureDataset(test_df, transform=val_transform)
+
+train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True)
+val_loader = DataLoader(val_dataset, batch_size=16)
+test_loader = DataLoader(test_dataset, batch_size=16)
+
+
+# resnet50
+def get_resnet50(num_classes_binary=2, num_classes_multi=4):
+    model = models.resnet50(pretrained=True)
+    in_features = model.fc.in_features
+
+    model.fc = nn.Identity()
+
+    classifier_binary = nn.Linear(in_features, num_classes_binary)
+    classifier_multi = nn.Linear(in_features, num_classes_multi)
+
+    return model, classifier_binary, classifier_multi
 
 def get_model(model_name):
     if model_name == "resnet50":
